@@ -14,18 +14,17 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public')); 
 
-// --- CONFIGURAÇÃO DO BANCO DE DADOS (ATUALIZADA COM SSL) ---
-// Cria uma "piscina" de conexões para ser mais rápido
+// --- CONFIGURAÇÃO DO BANCO DE DADOS (COM SSL) ---
 const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || 'admin', // Se não tiver .env, tenta 'admin'
+    password: process.env.DB_PASSWORD || 'admin',
     database: process.env.DB_NAME || 'investidor_app',
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
     ssl: {
-        rejectUnauthorized: false // <--- A CORREÇÃO ESTÁ AQUI! (Permite conexão segura com TiDB)
+        rejectUnauthorized: false // Permite conexão segura com TiDB
     }
 });
 
@@ -41,7 +40,6 @@ pool.getConnection()
 
 // --- ROTAS DE AUTENTICAÇÃO ---
 
-// Rota de Registro
 app.post('/register', async (req, res) => {
     const { email, password } = req.body;
 
@@ -50,17 +48,14 @@ app.post('/register', async (req, res) => {
     }
 
     try {
-        // Verifica se usuário já existe
         const [users] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
         if (users.length > 0) {
             return res.status(409).json({ error: 'Usuário já cadastrado.' });
         }
 
-        // Criptografa a senha (nunca salvamos senha pura!)
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(password, salt);
 
-        // Salva no banco
         await pool.execute('INSERT INTO users (email, password_hash) VALUES (?, ?)', [email, hash]);
 
         res.status(201).json({ message: 'Conta criada com sucesso!' });
@@ -70,12 +65,10 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// Rota de Login
 app.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        // Busca o usuário
         const [users] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
         
         if (users.length === 0) {
@@ -83,15 +76,12 @@ app.post('/login', async (req, res) => {
         }
 
         const user = users[0];
-
-        // Compara a senha enviada com a senha criptografada do banco
         const validPassword = await bcrypt.compare(password, user.password_hash);
 
         if (!validPassword) {
             return res.status(401).json({ error: 'Email ou senha incorretos.' });
         }
 
-        // Login aprovado! Retorna dados básicos (sem a senha)
         res.json({
             message: 'Login realizado!',
             user: {
@@ -107,11 +97,11 @@ app.post('/login', async (req, res) => {
 });
 
 
-// --- CÓDIGO ORIGINAL DE SCRAPING (MANTIDO) ---
+// --- CONFIGURAÇÕES DO ROBÔ (PUPPETEER) ---
 
 let browser;
 
-// --- CONFIGURAÇÕES DE VALUATION ---
+// --- VALUATION CONFIGS ---
 const TAXA_SELIC_ATUAL = 15.0;
 const SELIC_MEDIA_HISTORICA = 13.80;
 const PL_BASE_GRAHAM = 8.5;
@@ -120,16 +110,30 @@ const G_CRESCIMENTO_FALLBACK = 5.0;
 const GRAHAM_UNRELIABLE_SECTORS = new Set(['Tecnologia da Informação']);
 const GRAHAM_UNRELIABLE_SEGMENTS = new Set(['Software e Dados']);
 
+// --- FUNÇÃO DO BROWSER OTIMIZADA PARA RENDER ---
 async function getBrowser() {
     if (!browser) {
         browser = await puppeteer.launch({
             headless: "new",
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage', // Crítico para evitar estouro de memória no Render
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process', // Reduz consumo de RAM
+                '--disable-gpu'
+            ],
+            // Se estiver no Render, usa o caminho do executável configurado nas variáveis
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
             defaultViewport: null,
         });
     }
     return browser;
 }
+
+// --- FUNÇÕES AUXILIARES ---
 
 function strToNumber(str) {
     if (str === null || str === undefined || typeof str !== 'string' || str.trim() === '-' || str.trim() === '') {
@@ -177,17 +181,22 @@ const getRecClass = (rec) => {
     return 'neutral';
 };
 
+// --- FUNÇÕES DE SCRAPING ---
+
 async function scrapeInvestidor10(browser, ticker) {
     let page;
     try {
         page = await browser.newPage();
+        // Timeout aumentado para conexões lentas
         const url = `https://investidor10.com.br/acoes/${ticker.toLowerCase()}/`;
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        
         await Promise.all([
-             page.waitForSelector('#cards-ticker', { timeout: 30000 }),
-             page.waitForSelector('.dy-history', { timeout: 30000 }),
-             page.waitForSelector('#table-indicators', { timeout: 30000 })
+             page.waitForSelector('#cards-ticker', { timeout: 45000 }),
+             page.waitForSelector('.dy-history', { timeout: 45000 }),
+             page.waitForSelector('#table-indicators', { timeout: 45000 })
         ]);
+        
         const data = await page.evaluate(() => {
             const getTextFromTickerCard = (cardClass) => document.querySelector(`#cards-ticker ._card.${cardClass} ._card-body span`)?.innerText.trim() || null;
             const findCellText = (label) => {
@@ -244,6 +253,7 @@ async function scrapeInvestidor10(browser, ticker) {
         });
         return data;
     } catch(e) {
+        console.error('Erro no scraper Investidor10:', e.message);
         return {};
     } finally {
         if (page && !page.isClosed()) await page.close();
@@ -254,9 +264,10 @@ async function scrapeXpi(browser, ticker) {
     let page;
     try {
         page = await browser.newPage();
+        // User Agent para evitar bloqueios
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         const url = `https://conteudos.xpi.com.br/acoes/${ticker.toLowerCase()}/`;
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 35000 });
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
         await page.waitForSelector('.dados-produto', { timeout: 30000 });
         const data = await page.evaluate(() => {
             const getData = (label) => {
@@ -285,7 +296,7 @@ async function scrapeBtgPactual(browser, ticker) {
         page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         const url = `https://content.btgpactual.com/research/ativo/${ticker.toUpperCase()}`;
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 35000 });
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
         await page.waitForSelector('app-card-asset .metrics-intern', { timeout: 30000 });
         const data = await page.evaluate(() => ({
             recomendacao: document.querySelector('.buy .buy-positive-present')?.innerText.trim().toUpperCase() || document.querySelector('.buy p:not(.buy-title)')?.innerText.trim().toUpperCase() || null,
@@ -299,6 +310,8 @@ async function scrapeBtgPactual(browser, ticker) {
          if (page && !page.isClosed()) await page.close();
     }
 }
+
+// --- ROTAS DE BUSCA ---
 
 app.post('/buscar', async (req, res) => {
     const { ticker } = req.body;
@@ -384,6 +397,7 @@ app.post('/buscar', async (req, res) => {
         };
         res.json(responseData);
     } catch (error) {
+        console.error("Erro na rota /buscar:", error);
         res.status(500).json({ error: 'Erro geral ao buscar dados.' });
     }
 });
@@ -397,10 +411,10 @@ app.post('/buscar-fii', async (req, res) => {
         page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         const url = `https://investidor10.com.br/fiis/${ticker.toLowerCase()}/`;
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-        await page.waitForSelector('#cards-ticker', { timeout: 25000 });
-        try { await page.waitForSelector('#indicators-history', { timeout: 10000 }); } catch (e) {}
-        try { await page.waitForSelector('.basic-info', { timeout: 10000 }); } catch (e) {}
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
+        await page.waitForSelector('#cards-ticker', { timeout: 30000 });
+        try { await page.waitForSelector('#indicators-history', { timeout: 15000 }); } catch (e) {}
+        try { await page.waitForSelector('.basic-info', { timeout: 15000 }); } catch (e) {}
         const rawData = await page.evaluate(() => {
             const getTextFromTickerCard = (cardClass) => document.querySelector(`#cards-ticker ._card.${cardClass} ._card-body span`)?.innerText.trim() || null;
             const findTextByLabel = (label) => {
