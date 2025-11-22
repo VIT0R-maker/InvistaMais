@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análise de FIIs</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Análise de Fundos Imobiliários (FIIs)</h1>
+            <nav>
+                <a href="index.html">Ações</a>
+                <a href="fii.html" class="active">FIIs</a>
+                <a href="secaoEducativa.html">Aprenda</a>
+            </nav>
+        </header>
+
+        <div class="search-box">
+            <input type="text" id="ticker" placeholder="Digite o ticker (ex: HGLG11)" />
+            <button onclick="buscarFII()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <span>Buscar</span>
+            </button>
+        </div>
+
+        <div id="resultado-container">
+            </div>
+    </div>
+
+<script>
+function getIcon(classification) {
+    if (classification === 'good') {
+        return `<svg class="icon good" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+    }
+    if (classification === 'bad') {
+        return `<svg class="icon bad" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+    }
+    return `<svg class="icon neutral" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
+}
+
+async function buscarFII() {
+    const ticker = document.getElementById('ticker').value.trim().toUpperCase();
+    const resultadoContainer = document.getElementById('resultado-container');
+    
+    if (!ticker) {
+        resultadoContainer.innerHTML = `<div class="error-message">Por favor, digite um ticker válido.</div>`;
+        return;
+    }
+
+    resultadoContainer.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><p>Buscando dados de ${ticker}...</p></div>`;
+
+    try {
+        const resposta = await fetch('/buscar-fii', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticker }),
+        });
+
+        if (!resposta.ok) {
+            const erro = await resposta.json();
+            resultadoContainer.innerHTML = `<div class="error-message">${erro.error || 'Erro ao buscar os dados.'}</div>`;
+            return;
+        }
+
+        const dados = await resposta.json();
+
+        if (!dados || !dados.cotacao || !dados.cotacao.value || dados.cotacao.value === '-') {
+             resultadoContainer.innerHTML = `<div class="error-message">Dados não encontrados para ${ticker}.</div>`;
+            return;
+        }
+        
+        // A função createCard agora lida com o objeto { value: '...', class: '...' }
+        const createCard = (label, data) => {
+            const C_value = (data && data.value !== undefined) ? data.value : '-';
+            const C_class = (data && data.class) ? data.class : 'neutral';
+            return `
+                <div class="result-card ${C_class}">
+                    <div class="card-header"><span>${label}</span></div>
+                    <div class="card-body">
+                        ${getIcon(C_class)}
+                        <span class="value">${C_value}</span>
+                    </div>
+                </div>`;
+        }
+
+        // HTML ATUALIZADO COM SEÇÕES LÓGICAS
+        resultadoContainer.innerHTML = `
+            <div class="fii-results">
+                <h2>Resultados para <strong>${dados.ticker}</strong></h2>
+
+                <h3>Múltiplos de Preço & Mercado</h3>
+                <div class="results-grid">
+                    ${createCard('Cotação', dados.cotacao)}
+                    ${createCard('P/VP', dados.pvp)}
+                    ${createCard('DY (12 Meses)', dados.dy)}
+                    ${createCard('Liquidez Diária', dados.liquidezDiaria)}
+                    ${createCard('Valor de Mercado', dados.valorMercado)}
+                </div>
+
+                <h3>Proventos & Cálculos</h3>
+                <div class="results-grid">
+                    ${createCard('Último Rendimento', dados.ultimoRendimento)}
+                    ${createCard('Yield 1 Mês', dados.y1m)}
+                    ${createCard('Cotas p/ R$1/mês (EBN)', dados.ebn)}
+                    ${createCard('Valor p/ R$1/mês (VN)', dados.vn)}
+                </div>
+
+                <h3>Patrimônio & Cotistas</h3>
+                <div class="results-grid">
+                    ${createCard('Valor Patrimonial', dados.valorPatrimonial)}
+                    ${createCard('VPA (Valor Patr. Cota)', dados.vpa)}
+                    ${createCard('Vacância', dados.vacancia)}
+                    ${createCard('Nº de Cotistas', dados.numCotistas)}
+                    ${createCard('Cotas Emitidas', dados.cotasEmitidas)}
+                </div>
+
+                <h3>Informações do Fundo</h3>
+                <div class="results-grid">
+                    ${createCard('Segmento', dados.segmento)}
+                    ${createCard('Tipo de Fundo', dados.tipoFundo)}
+                    ${createCard('Tipo de Gestão', dados.tipoGestao)}
+                    ${createCard('Taxa de Adm.', dados.taxaAdm)}
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        resultadoContainer.innerHTML = `<div class="error-message">Erro na requisição: ${error.message}</div>`;
+    }
+}
+
+document.getElementById('ticker').addEventListener('keyup', (event) => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        buscarFII();
+    }
+});
+</script>
+</body>
+</html>

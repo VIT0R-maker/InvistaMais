@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análise de Ações</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- SCRIPT DE PROTEÇÃO (Segurança) -->
+    <script>
+        // Se não tiver o "crachá" de logado, chuta para o login
+        if (!localStorage.getItem('user_token')) {
+            window.location.href = '/login.html';
+        }
+
+        // Função de Logout
+        function sair() {
+            localStorage.removeItem('user_token');
+            localStorage.removeItem('user_email');
+            window.location.href = '/login.html';
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <header style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h1>Análise de Ações</h1>
+                <p style="font-size: 12px; color: #666; margin:0;">Logado como: <span id="user-display">...</span></p>
+            </div>
+            <button onclick="sair()" style="background: #dc3545; padding: 8px 15px; font-size: 14px;">Sair</button>
+        </header>
+        
+        <!-- Navegação Centralizada -->
+        <div style="text-align: center; margin: 20px 0;">
+            <nav>
+                <a href="index.html" class="active">Ações</a>
+                <a href="fii.html">FIIs</a>
+                <a href="secaoEducativa.html">Aprenda</a>
+            </nav>
+        </div>
+
+        <div class="search-box">
+            <input type="text" id="ticker" placeholder="Digite o ticker (ex: PETR4)" />
+            <button onclick="buscar()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <span>Buscar</span>
+            </button>
+        </div>
+
+        <div id="resultado-container">
+        </div>
+    </div>
+
+<script>
+    // Mostra o email do usuário logado
+    document.getElementById('user-display').textContent = localStorage.getItem('user_email') || 'Usuário';
+
+    // Variável global para o gráfico
+    let valuationChart = null;
+
+    function getIcon(classification) {
+        if (classification === 'good') return `<svg class="icon good" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+        if (classification === 'bad') return `<svg class="icon bad" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+        return `<svg class="icon neutral" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
+    }
+
+    // Função auxiliar para converter "R$ 20,00" -> 20.00
+    function parseCurrencyToNumber(str) {
+        if (!str || typeof str !== 'string' || str === '-') return 0;
+        const cleanStr = str.replace('R$', '').replace(/\./g, '').replace(',', '.').trim();
+        const num = parseFloat(cleanStr);
+        return isNaN(num) ? 0 : num;
+    }
+
+    async function buscar() {
+        const ticker = document.getElementById('ticker').value.trim().toUpperCase();
+        const resultadoContainer = document.getElementById('resultado-container');
+
+        if (!ticker) {
+            resultadoContainer.innerHTML = `<div class="error-message">Por favor, digite um ticker válido.</div>`;
+            return;
+        }
+
+        resultadoContainer.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><p>Buscando dados de ${ticker}...</p></div>`;
+
+        try {
+            const resposta = await fetch('/buscar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker }),
+            });
+
+            if (!resposta.ok) {
+                const erro = await resposta.json();
+                resultadoContainer.innerHTML = `<div class="error-message">${erro.error || 'Erro ao buscar os dados.'}</div>`;
+                return;
+            }
+
+            const dados = await resposta.json();
+
+            if (!dados || !dados.cotacao || typeof dados.cotacao !== 'object' || !dados.cotacao.value || dados.cotacao.value === '-') {
+                 resultadoContainer.innerHTML = `<div class="error-message">Dados essenciais não encontrados para o ticker ${ticker}. Verifique se o ticker está correto ou tente novamente.</div>`;
+                return;
+            }
+
+            const createCard = (label, data, warning = null) => {
+                const CV_value = (data && typeof data === 'object' && data.value !== undefined && data.value !== null) ? String(data.value) : '-';
+                const C_class = (data && typeof data === 'object' && data.class !== undefined && data.class !== null) ? String(data.class) : 'neutral';
+
+                const warningIcon = warning ? `
+                    <div class="warning-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                        <span class="tooltip">${warning}</span>
+                    </div>` : '';
+
+                return `
+                    <div class="result-card ${C_class}">
+                        <div class="card-header">
+                            <span>${label}</span>
+                            ${warningIcon}
+                        </div>
+                        <div class="card-body">
+                            ${getIcon(C_class)}
+                            <span class="value">${CV_value}</span>
+                        </div>
+                    </div>`;
+            }
+
+            // Seções das Corretoras
+            const xpiSection = (dados.xpiRecomendacao && dados.xpiRecomendacao.value && dados.xpiRecomendacao.value !== '-') ? `
+                <h3>Humor da Corretora (XP)</h3>
+                <div class="results-grid">
+                    ${createCard('Recomendação (XP)', dados.xpiRecomendacao)}
+                    ${createCard('Preço Alvo (XP)', dados.xpiPrecoAlvo)}
+                    ${createCard('Potencial (XP)', dados.xpiPotencial)}
+                    ${createCard('Risco (XP)', dados.xpiRisco)}
+                </div>` : '';
+
+            const btgSection = (dados.btgRecomendacao && dados.btgRecomendacao.value && dados.btgRecomendacao.value !== '-') ? `
+                <h3>Humor da Corretora (BTG)</h3>
+                <div class="results-grid">
+                    ${createCard('Recomendação (BTG)', dados.btgRecomendacao)}
+                    ${createCard('Preço Alvo (BTG)', dados.btgPrecoAlvo)}
+                    ${createCard('Potencial (BTG)', dados.btgPotencial)}
+                </div>` : '';
+
+            const grahamWarning = dados.grahamWarning || null;
+
+            resultadoContainer.innerHTML = `
+                <div class="acao-results">
+                    <h2>Resultados para <strong>${dados.ticker}</strong></h2>
+
+                    <h3>Múltiplos de Preço & Valor de Mercado</h3>
+                    <div class="results-grid">
+                        ${createCard('Cotação Atual', dados.cotacao)}
+                        ${createCard('P/L', dados.pl)}
+                        ${createCard('P/VP', dados.pvp)}
+                        ${createCard('P/EBITDA', dados.pEbitda)}
+                        ${createCard('EV/EBITDA', dados.evEbitda)}
+                        ${createCard('P/Ativo', dados.pAtivo)}
+                    </div>
+
+                    <h3>Dividendos & Proventos</h3>
+                     <div class="results-grid">
+                         ${createCard('DY (12M)', dados.dy)}
+                         ${createCard('DY Médio (5 Anos)', dados.dy5Anos)}
+                         ${createCard('Payout', dados.payout)}
+                     </div>
+
+                    <h3>Indicadores de Rentabilidade</h3>
+                    <div class="results-grid">
+                        ${createCard('ROE', dados.roe)}
+                        ${createCard('ROIC', dados.roic)}
+                        ${createCard('ROA', dados.roa)}
+                        ${createCard('Margem Bruta', dados.margemBruta)}
+                        ${createCard('Margem EBIT', dados.margemEbit)}
+                        ${createCard('Margem EBITDA', dados.margemEbitda)}
+                        ${createCard('Margem Líquida', dados.margemLiquida)}
+                    </div>
+
+                     <h3>Indicadores de Endividamento & Liquidez</h3>
+                     <div class="results-grid">
+                         ${createCard('Dív. Líq./Patrimônio', dados.dividaLiquidaPatrimonio)}
+                         ${createCard('Dív. Líq./EBITDA', dados.dividaLiquidaEbitda)}
+                         ${createCard('Dív. Líq./EBIT', dados.dividaLiquidaEbit)}
+                         ${createCard('Liquidez Corrente', dados.liquidezCorrente)}
+                     </div>
+
+                     <h3>Outros Indicadores</h3>
+                    <div class="results-grid">
+                        ${createCard('LPA (Lucro por Ação)', dados.lpa)}
+                        ${createCard('VPA (Valor Patr. Ação)', dados.vpa)}
+                        ${createCard('CAGR Lucros 5A', dados.cagrLucros)}
+                        ${createCard('Giro Ativos', dados.giroAtivos)}
+                    </div>
+
+                    ${xpiSection}
+                    ${btgSection}
+
+                    <h3>Valuation (Fórmulas Calculadas)</h3>
+                    
+                    <div class="chart-wrapper" style="position: relative; height:300px; width:100%; margin-bottom: 30px;">
+                        <canvas id="valuationChart"></canvas>
+                    </div>
+
+                    <div class="results-grid">
+                        ${createCard('Preço Teto (Bazin 8% - 12M)', dados.precoTeto)}
+                        ${createCard('Preço Teto (Bazin 8% - 5Y)', dados.bazin5Y)}
+                        ${createCard('Valor Justo (Graham)', dados.valorJusto, grahamWarning)}
+                        ${createCard('Valor Justo (Graham Rev.)', dados.valorRevisado, grahamWarning)}
+                    </div>
+                </div>
+            `;
+
+            // Lógica do Gráfico
+            const ctx = document.getElementById('valuationChart').getContext('2d');
+            
+            const valCotacao = parseCurrencyToNumber(dados.cotacao.value);
+            const valBazin = parseCurrencyToNumber(dados.precoTeto.value); 
+            const valGraham = parseCurrencyToNumber(dados.valorJusto.value);
+
+            if (valuationChart) {
+                valuationChart.destroy();
+            }
+
+            valuationChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Cotação Atual', 'Preço Teto (Bazin)', 'Valor Justo (Graham)'],
+                    datasets: [{
+                        label: 'Valuation (R$)',
+                        data: [valCotacao, valBazin, valGraham], 
+                        backgroundColor: [
+                            '#0052cc', 
+                            '#28a745', 
+                            '#17a2b8'  
+                        ],
+                        borderColor: [
+                            '#003b91',
+                            '#1e7e34',
+                            '#117a8b'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        title: {
+                            display: true,
+                            text: 'Comparativo de Preço vs. Valuation Simplificado'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) label += ': ';
+                                    if (context.parsed.y !== null) {
+                                        label += new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(context.parsed.y);
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) { return 'R$ ' + value; }
+                            }
+                        }
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error("Erro detalhado no buscar():", error);
+            resultadoContainer.innerHTML = `<div class="error-message">Erro na requisição: ${error.message}. Verifique o console para mais detalhes.</div>`;
+        }
+    }
+
+    document.getElementById('ticker').addEventListener('keyup', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            buscar();
+        }
+    });
+
+</script>
+</body>
+</html>

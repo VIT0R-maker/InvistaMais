@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Investidor10 Clone</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Estilos exclusivos da tela de login para centralizar tudo */
+        body.login-page {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #f4f7fa;
+        }
+        .login-card {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        .login-card h1 { color: #0052cc; margin-bottom: 10px; }
+        .login-card p { color: #667; margin-bottom: 30px; }
+        
+        .form-group { text-align: left; margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; color: #333; font-weight: 500; }
+        .form-group input { 
+            width: 100%; padding: 12px; border: 1px solid #dde4ec; 
+            border-radius: 8px; box-sizing: border-box; font-size: 16px;
+        }
+        
+        button.btn-auth {
+            width: 100%; padding: 14px; background-color: #0052cc; color: white;
+            border: none; border-radius: 8px; font-size: 16px; font-weight: bold;
+            cursor: pointer; transition: background 0.3s;
+        }
+        button.btn-auth:hover { background-color: #003b91; }
+        
+        .toggle-link { margin-top: 20px; font-size: 14px; color: #667; }
+        .toggle-link span { color: #0052cc; cursor: pointer; font-weight: bold; }
+        
+        .message { 
+            padding: 12px; border-radius: 8px; margin-bottom: 20px; 
+            display: none; font-size: 14px; 
+        }
+        .error { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+        .success { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+    </style>
+</head>
+<body class="login-page">
+
+    <!-- TELA DE LOGIN -->
+    <div class="login-card" id="card-login">
+        <h1>Bem-vindo</h1>
+        <p>Entre para analisar seus ativos</p>
+        <div id="msg-login" class="message"></div>
+
+        <form id="form-login">
+            <div class="form-group">
+                <label>E-mail</label>
+                <input type="email" id="email-login" required>
+            </div>
+            <div class="form-group">
+                <label>Senha</label>
+                <input type="password" id="pass-login" required>
+            </div>
+            <button type="submit" class="btn-auth">Entrar</button>
+        </form>
+        <div class="toggle-link">
+            Não tem conta? <span onclick="showRegister()">Criar agora</span>
+        </div>
+    </div>
+
+    <!-- TELA DE CADASTRO -->
+    <div class="login-card" id="card-register" style="display: none;">
+        <h1>Criar Conta</h1>
+        <p>Comece a investir melhor hoje</p>
+        <div id="msg-register" class="message"></div>
+
+        <form id="form-register">
+            <div class="form-group">
+                <label>E-mail</label>
+                <input type="email" id="email-register" required>
+            </div>
+            <div class="form-group">
+                <label>Senha</label>
+                <input type="password" id="pass-register" required>
+            </div>
+            <button type="submit" class="btn-auth">Cadastrar</button>
+        </form>
+        <div class="toggle-link">
+            Já tem conta? <span onclick="showLogin()">Fazer Login</span>
+        </div>
+    </div>
+
+    <script>
+        // Funções para trocar de tela
+        function showRegister() {
+            document.getElementById('card-login').style.display = 'none';
+            document.getElementById('card-register').style.display = 'block';
+            clearMsgs();
+        }
+        function showLogin() {
+            document.getElementById('card-register').style.display = 'none';
+            document.getElementById('card-login').style.display = 'block';
+            clearMsgs();
+        }
+        function clearMsgs() {
+            document.querySelectorAll('.message').forEach(el => el.style.display = 'none');
+        }
+        function showMessage(elementId, text, type) {
+            const el = document.getElementById(elementId);
+            el.textContent = text;
+            el.className = `message ${type}`;
+            el.style.display = 'block';
+        }
+
+        // LÓGICA DE LOGIN
+        document.getElementById('form-login').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email-login').value;
+            const password = document.getElementById('pass-login').value;
+
+            try {
+                const res = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    // SUCESSO: Salva que o usuário está logado e redireciona
+                    localStorage.setItem('user_token', 'logado'); 
+                    localStorage.setItem('user_email', data.user.email);
+                    window.location.href = '/index.html'; 
+                } else {
+                    showMessage('msg-login', data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('msg-login', 'Erro ao conectar no servidor.', 'error');
+            }
+        });
+
+        // LÓGICA DE CADASTRO
+        document.getElementById('form-register').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email-register').value;
+            const password = document.getElementById('pass-register').value;
+
+            try {
+                const res = await fetch('/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    showMessage('msg-register', 'Conta criada! Faça login.', 'success');
+                    setTimeout(() => showLogin(), 2000);
+                } else {
+                    showMessage('msg-register', data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('msg-register', 'Erro ao conectar no servidor.', 'error');
+            }
+        });
+    </script>
+</body>
+</html>
